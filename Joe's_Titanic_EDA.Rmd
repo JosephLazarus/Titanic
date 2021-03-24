@@ -1,0 +1,239 @@
+---
+title: "Joe's_Titanic_EDA"
+author: "Joseph Lazarus"
+date: "3/22/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r, echo=FALSE,}
+
+#Load Libraries needed for analysis
+library(dplyr)
+library(zoo)
+library(tidyverse)
+library(visdat)
+library(GGally)
+library(ggplot2)
+library(skimr)
+library(stringr)
+library(ggplot2)
+library(plotly)
+library(ggthemes)
+library(visdat)
+```
+
+```{r, echo=FALSE}
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+#                    Set Theme for Plots
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+theme_set(theme_fivethirtyeight())
+theme_update(axis.title = element_text()) #the default for fivethirtyeight is to not show axis labels, this removes that default so we can choose to specify and display axis titles
+theme_update(plot.title = element_text(hjust = 0.5)) # changing default to center all titles
+
+```
+
+Loadinig and exploring the data
+
+```{r titanic}
+#training set
+train.raw = read.csv("https://raw.githubusercontent.com/JosephLazarus/Titanic/main/The_Data/train.csv")
+
+#test set
+test = read.csv("https://raw.githubusercontent.com/JosephLazarus/Titanic/main/The_Data/test.csv")
+
+head(train.raw)
+str(train.raw)
+#891 observations
+
+skim(train.raw)
+
+vis_dat(train.raw)
+
+vis_miss(train.raw)
+#20% of Age category missing
+
+#another look at missing values
+colSums(is.na(train.raw))
+
+train.raw %>% ggplot(aes(x= Survived)) + geom_bar(aes(stat = "identity",position="dodge"))
+
+
+train.raw %>% ggplot(aes(x= Survived)) + geom_histogram()
+
+train.raw %>% ggplot(aes(x=Age)) + geom_histogram() + stat_bin(bins=30)
+
+train.raw %>% ggplot(aes(x=SibSp)) + geom_histogram() + stat_bin(bins=30)
+
+train.raw %>% ggplot(aes(x=Pclass),y=Age) + geom_boxplot() + stat_bin(bins=30)
+
+plot_ly(train.raw, x= ~Pclass, y= ~Age, color = ~Pclass, type = "box")
+
+```
+
+explore the marginal proportions and probablities exposed in EDA 
+```{r}
+#basic ratios or marginal proportions 
+overall_survival_rate = sum(train.raw$Survived == 1) / length(train.raw)
+#28.5
+
+male_survival_rate = sum((train.raw$Survived == 1) & (train.raw$Sex == "male")) / sum(train.raw$Sex == "male")
+#18.89
+
+female_survival_rate = sum((train.raw$Survived ==1) &(train.raw$Sex == "female")) / sum(train.raw$Sex == "female")
+#74.2
+
+class1_survival_rate = sum((train.raw$Survived ==1) & (train.raw$Pclass == 1)) / sum(train.raw$Pclass == 1)
+#62.96
+
+class2_survival_rate = sum((train.raw$Survived ==1) & (train.raw$Pclass == 2)) / sum(train.raw$Pclass == 2)
+#47.28
+
+class3_survival_rate = sum((train.raw$Survived ==1) & (train.raw$Pclass == 3)) / sum(train.raw$Pclass == 3)
+#24.24
+
+```
+
+Dealing with missing values in Age column
+
+```{r}
+#Checking out the mean based on Pclass
+
+quantile(train.raw$Age, na.rm = TRUE)
+tapply(train.raw$Age, train.raw$Pclass, mean, na.rm = TRUE)
+
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# my attempt to write my own function to impute mean based on Pclass for missing Vales
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+# impute_age_mean <-function(col1,col2){
+#  train.raw$Age = col1
+#  train.raw$Pclass = col2
+  
+#  for (i in train.raw$Age){
+#    if(is.na(i) == TRUE & train.raw$Pclass ==1){
+#      return(38.2 == train.raw$Age)
+#    }
+#    else if (is.na(i)== TRUE & train.raw$Pclass ==2){
+#      return(29.9 == train.raw$Age)
+#    }
+#    else if (is.na(i)==TRUE & train.raw$Pclass == 3){
+#      return(25.1 == train.raw$Age)
+#    }
+#    else{
+#      return(train.raw$Age)
+#    }
+#  }
+#}
+
+#impute_age_mean(train.raw$Age, train.raw$Pclass)
+
+#train.raw$Age =  sapply(train.raw[c('Age','Pclass')], impute_age_mean)
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Base R attempt 2
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+# df[, sapply(df, is.numeric)] <-
+#  do.call("rbind", lapply(split(df[, sapply(df, is.numeric)], df$class), function(x) {
+#    x <- ifelse(is.na(x), mean(x, na.rm = TRUE), x)
+#  }))
+
+### dplyr attempt
+# train.raw %>%
+#  group_by(Pclass) %>%
+#  mutate_at(vars(-group_cols()), na.aggregate)
+
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Used method from Beer Study
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+impute.mean <- function(x) replace(x, is.na(x), mean(x, na.rm = TRUE))
+
+train.raw <- train.raw %>% group_by(Pclass) %>%
+    mutate(
+        Age = impute.mean(Age)
+    )
+
+#drop observation 62, 830  missing value for cabin
+
+train.raw <- train.raw[-c(62,830), ]
+
+```
+
+make dummy variables and prepare dataset for ML
+```{r}
+
+#install.packages('dummies')
+library(dummies)
+
+#Drop cols that not going to use:
+# 1 = passengerId, 4= name, 9=ticket, 11 = cabin
+train.new <- subset(train.raw, select=c(2,3,5,6,7,8,10,12))
+
+skim(train.new)
+vis_dat(train.new)
+
+vis_miss(train.new)
+
+# check for correlations convert survived, sex, embark to factors 
+#not concerned with embark right now
+data.indicator = subset(train.new, select=c(1:7))
+data.indicator$Sex = dummy(train.new$Sex)
+cor(data.indicator)
+
+is.factor(train.new$Sex)
+contrasts(factor(train.new$Sex)) #show how factor will be converted to indicator
+levels(factor(train.new$Embarked)) # what are the levels of this factor
+
+
+```
+Modeling
+```{r}
+
+#use logistic regression familt binomal for classification and logit for logistic regression
+glm.model <- glm(Survived ~ ., family = binomial(link = 'logit'), data = train.new)
+
+summary(glm.model)
+
+#plots are not easy to read for logistic regression
+plot(glm.model)
+
+#use the anova to compare the addition of each variable
+anova(glm.model, test='Chisq')
+
+#create smaller data frame with rows and cols that are significant
+train.small <- na.omit(subset(train.new, select = c(1,2,3,4,5)))
+
+glm.model2 <- glm(Survived ~.,family = binomial(link = 'logit'), data = train.small)
+
+summary(glm.model2)
+confint(glm.model2)
+#let "hit" when predicted >50% matches survived =1 and predicted <50% matches surviced =o
+#trunc will convert that probability back to log form
+#ex prob of .55 *2 = 1.10 trunc returns 1 | prob of .49 *2 = .98 trunc = 0
+y= train.small$Survived - trunc(2*glm.model2$fitted)
+hits = sum(y==0)
+hitratio = hits/length(y)
+
+
+#if expontiate the ods of the log we get the ods ratio for each coef
+# ex ample 15.38 times as likely to survive as a female
+exp(coef(glm.model2))
+
+#odds ratio with its 95% confint
+exp(cbind(odds_ratio = coef(glm.model2),confint(glm.model2)))
+
+```
